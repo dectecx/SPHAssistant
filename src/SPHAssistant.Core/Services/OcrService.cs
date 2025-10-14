@@ -1,6 +1,9 @@
+using Microsoft.Extensions.Logging;
 using OpenCvSharp;
-using SixLabors.ImageSharp.Formats.Png;
 using SPHAssistant.Core.Interfaces;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Png;
+using System.Text.RegularExpressions;
 using TesseractOCR;
 using TesseractOCR.Enums;
 using TesseractOCR.Exceptions;
@@ -12,18 +15,23 @@ namespace SPHAssistant.Core.Services;
 /// </summary>
 public class OcrService : IOcrService
 {
+    private readonly ILogger<OcrService> _logger;
     private const string TessDataPath = "./tessdata";
     private const string Language = "eng";
     private const string CharWhitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="OcrService"/> class.
+    /// </summary>
+    /// <param name="logger">The logger instance.</param>
+    public OcrService(ILogger<OcrService> logger)
+    {
+        _logger = logger;
+    }
+
+    /// <summary>
     /// Asynchronously recognizes text from a captcha image stream.
     /// </summary>
-    /// <param name="captchaStream">The stream containing the captcha image.</param>
-    /// <returns>
-    /// A task that represents the asynchronous operation. 
-    /// The task result contains the recognized text, or an empty string if recognition fails.
-    /// </returns>
     public async Task<string> RecognizeCaptchaAsync(Stream captchaStream)
     {
         try
@@ -32,7 +40,6 @@ public class OcrService : IOcrService
             using var imageSharp = await SixLabors.ImageSharp.Image.LoadAsync(captchaStream);
 
             // Step 2: Convert the decoded image to a PNG byte array in memory.
-            // This acts as a stable, intermediate format for OpenCV.
             using var pngStream = new MemoryStream();
             await imageSharp.SaveAsync(pngStream, new PngEncoder());
             var pngBytes = pngStream.ToArray();
@@ -41,21 +48,21 @@ public class OcrService : IOcrService
             using var src = Cv2.ImDecode(pngBytes, ImreadModes.Grayscale);
             if (src.Empty())
             {
-                Console.WriteLine("Failed to decode PNG data with OpenCV. Mat is empty.");
+                _logger.LogWarning("Failed to decode PNG data with OpenCV. Mat is empty.");
                 return string.Empty;
             }
 
             // --- OpenCV Processing Pipeline ---
             using var inverted = new Mat();
             Cv2.BitwiseNot(src, inverted);
-
+            
             using var binary = new Mat();
             Cv2.Threshold(inverted, binary, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
 
             using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
             using var cleaned = new Mat();
             Cv2.MorphologyEx(binary, cleaned, MorphTypes.Open, kernel);
-
+            
             using var finalImage = new Mat();
             Cv2.BitwiseNot(cleaned, finalImage);
             // --- End of OpenCV Pipeline ---
@@ -78,18 +85,18 @@ public class OcrService : IOcrService
             using var pixImage = TesseractOCR.Pix.Image.LoadFromMemory(processedImageBytes);
             using var page = engine.Process(pixImage, PageSegMode.SingleLine);
 
-            var result = page.Text.Trim();
+            var result = Regex.Replace(page.Text, @"\s+", "").Trim();
 
             return result;
         }
         catch (TesseractException ex)
         {
-            Console.WriteLine($"Tesseract OCR recognition failed: {ex.Message}");
+            _logger.LogError(ex, "Tesseract OCR recognition failed.");
             return string.Empty;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"An unexpected error occurred during captcha processing: {ex.Message}");
+            _logger.LogError(ex, "An unexpected error occurred during captcha processing.");
             return string.Empty;
         }
     }
