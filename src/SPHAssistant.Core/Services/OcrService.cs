@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using OpenCvSharp;
 using SPHAssistant.Core.Interfaces;
-using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using System.Text.RegularExpressions;
 using TesseractOCR;

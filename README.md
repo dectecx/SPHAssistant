@@ -64,15 +64,51 @@ graph TD
 
 ---
 
+## 🔬 網站互動原理 (Site Interaction Principles)
+
+本專案透過模擬一般使用者在瀏覽器上的操作，以非瀏覽器 (nobrowser) 的方式與聖保祿醫院的掛號網站進行互動。該網站是使用 **ASP.NET Web Forms** 技術建置，其核心機制為 **PostBack**。
+
+### Web Forms PostBack 機制解析
+
+1.  **初始載入 (Initial GET Request)**:
+    *   當程式首次對目標頁面 (如 `Query.aspx`) 發送 `GET` 請求時，伺服器會回傳完整的 HTML。
+    *   此 HTML 內包含了數個重要的隱藏欄位 (`<input type="hidden">`)，其中最關鍵的是 `__VIEWSTATE`。此欄位以 Base64 編碼儲存了頁面上所有控制項的狀態。
+
+2.  **維持會話 (Session Management)**:
+    *   ASP.NET 網站透過 `ASP.NET_SessionId` 這個 Cookie 來識別不同的使用者會話。驗證碼的正確值被儲存在伺服器的 Session 中。
+    *   因此，從初始載入、獲取驗證碼，到最終提交表單，**全程都必須使用同一個 `HttpClient` 實例**，並透過 `CookieContainer` 來自動管理和傳遞此 Session Cookie。
+
+3.  **提交表單 (Form POST Request)**:
+    *   當使用者在網頁上點擊按鈕（例如「送出查詢」）時，瀏覽器會向**同一個頁面**發起一個 `POST` 請求，此行為稱為 PostBack。
+    *   這個 `POST` 請求的內容 (Payload) 必須包含：
+        *   所有使用者填寫的資料（如身分證號、生日）。
+        *   從初始 `GET` 請求中取得的所有隱藏欄位 (`__VIEWSTATE`, `__EVENTVALIDATION` 等)。
+        *   觸發此次提交的按鈕的 `name` 與 `value`。
+
+### C# 實作流程
+
+`HospitalClient` 服務完整封裝了上述流程：
+
+1.  **建立 `HttpClient`**: 建立一個包含 `CookieContainer` 的 `HttpClient` 實例，並設定模擬瀏覽器的 `User-Agent`。
+2.  **發送初始 GET 請求**: 呼叫目標頁面，取得 HTML 內容及 `ASP.NET_SessionId` Cookie。
+3.  **解析隱藏欄位**: 使用 `HtmlAgilityPack` 解析 HTML，提取 `__VIEWSTATE`, `__VIEWSTATEGENERATOR`, `__EVENTVALIDATION` 的值。
+4.  **下載並辨識驗證碼**: 在同一個 `HttpClient` 會話下，請求驗證碼圖片 URL (`ValidateCode.aspx`)，並將回傳的圖片資料流交給 `OcrService` 進行辨識。
+5.  **建構並發送 POST 請求**: 將所有使用者資料、隱藏欄位和驗證碼組合成 `FormUrlEncodedContent`，向目標頁面發送 `POST` 請求。
+6.  **分析回應**: 根據回傳的 HTML 內容，判斷操作是否成功（例如，檢查是否包含 "驗證碼錯誤" 或 "查無資料" 等關鍵字）。
+
+透過精確模擬這個流程，我們的程式得以在沒有圖形介面的情況下，完成與 Web Forms 網站的資料互動。
+
+---
+
 ## 🗺️ 開發藍圖與進度 (Development Roadmap & Progress)
 
 此處使用簡單的表格來追蹤各主要功能的開發進度。
 
 | 階段 (Phase) | 主要功能 (Major Feature) | 狀態 (Status) | 預計完成日 | 備註 |
 | :--- | :--- | :---: | :---: | :--- |
-| **P1: 核心功能建立** | **1.1** 醫院網站 Client 開發 (查詢門診/醫生) | ⚪️ 未開始 | - | |
+| **P1: 核心功能建立** | **1.1** 醫院網站 Client 開發 (查詢門診/醫生) | 🟡 進行中 | - | |
 | | **1.2** 驗證碼 OCR 辨識模組 | 🟡 進行中 | - | |
-| | **1.3** 模擬登入與掛號功能 | ⚪️ 未開始 | - | |
+| | **1.3** 模擬登入與掛號功能 | 🟡 進行中 | - | |
 | | **1.4** 門診進度爬蟲 | ⚪️ 未開始 | - | |
 | **P2: Line Bot 整合**| **2.1** 建立 Line Bot Webhook 伺服器 | ⚪️ 未開始 | - | |
 | | **2.2** 實作查詢指令 (查詢醫生/門診) | ⚪️ 未開始 | - | |

@@ -12,8 +12,8 @@ try
             .Enrich.FromLogContext())
         .ConfigureServices((hostContext, services) =>
         {
-            services.AddHttpClient();
             services.AddSingleton<IOcrService, OcrService>();
+            services.AddSingleton<IHospitalClient, HospitalClient>();
             services.AddHostedService<Worker>();
         })
         .Build();
