@@ -49,12 +49,12 @@ public class Worker : BackgroundService
 
                 var imageBytes = await response.Content.ReadAsByteArrayAsync(stoppingToken);
 
-                // Save the image for manual verification before processing
+                // Save the raw, original image for debugging purposes IMMEDIATELY after download.
                 var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
-                var fileName = $"captcha_{timestamp}.gif";
-                var filePath = Path.Combine(captchaBackupPath, fileName);
-                await File.WriteAllBytesAsync(filePath, imageBytes, stoppingToken);
-                _logger.LogInformation("Captcha image saved to: {FilePath}", filePath);
+                var rawFileName = $"captcha_{timestamp}_raw.gif";
+                var rawFilePath = Path.Combine(captchaBackupPath, rawFileName);
+                await File.WriteAllBytesAsync(rawFilePath, imageBytes, stoppingToken);
+                _logger.LogInformation("Raw captcha image saved to: {FilePath}", rawFilePath);
 
                 // Use a new stream for OCR service
                 using var imageStream = new MemoryStream(imageBytes);

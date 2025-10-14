@@ -1,6 +1,5 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using OpenCvSharp;
+using SixLabors.ImageSharp.Formats.Png;
 using SPHAssistant.Core.Interfaces;
 using TesseractOCR;
 using TesseractOCR.Enums;
@@ -13,10 +12,8 @@ namespace SPHAssistant.Core.Services;
 /// </summary>
 public class OcrService : IOcrService
 {
-    // The Tesseract engine requires language data files (.traineddata).
     private const string TessDataPath = "./tessdata";
     private const string Language = "eng";
-    // Whitelist for characters to recognize, as per requirements.
     private const string CharWhitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     /// <summary>
@@ -31,40 +28,56 @@ public class OcrService : IOcrService
     {
         try
         {
-            // Initialize the Tesseract engine with LSTM mode for potentially better accuracy.
-            using var engine = new Engine(TessDataPath, Language, EngineMode.LstmOnly);
-            engine.SetVariable("tessedit_char_whitelist", CharWhitelist);
+            // Step 1: Decode the initial image stream using the reliable ImageSharp library.
+            using var imageSharp = await SixLabors.ImageSharp.Image.LoadAsync(captchaStream);
 
-            // Pre-process the image using SixLabors.ImageSharp
-            using var image = await Image.LoadAsync<Rgba32>(captchaStream);
+            // Step 2: Convert the decoded image to a PNG byte array in memory.
+            // This acts as a stable, intermediate format for OpenCV.
+            using var pngStream = new MemoryStream();
+            await imageSharp.SaveAsync(pngStream, new PngEncoder());
+            var pngBytes = pngStream.ToArray();
 
-            // Image pre-processing pipeline for optimization.
-            image.Mutate(x =>
-                x.Resize(image.Width * 2, image.Height * 2)
-                    .Grayscale()
-                    .GaussianBlur(0.7f)
-                    .BinaryThreshold(0.55f)
-            );
+            // Step 3: Load the PNG data into an OpenCV Mat object for processing.
+            using var src = Cv2.ImDecode(pngBytes, ImreadModes.Grayscale);
+            if (src.Empty())
+            {
+                Console.WriteLine("Failed to decode PNG data with OpenCV. Mat is empty.");
+                return string.Empty;
+            }
 
-            // Convert the processed image into a format readable by Tesseract
-            using var ms = new MemoryStream();
-            await image.SaveAsPngAsync(ms);
-            ms.Position = 0;
+            // --- OpenCV Processing Pipeline ---
+            using var inverted = new Mat();
+            Cv2.BitwiseNot(src, inverted);
 
-            // Save a copy of the processed image for debugging purposes
+            using var binary = new Mat();
+            Cv2.Threshold(inverted, binary, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+
+            using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
+            using var cleaned = new Mat();
+            Cv2.MorphologyEx(binary, cleaned, MorphTypes.Open, kernel);
+
+            using var finalImage = new Mat();
+            Cv2.BitwiseNot(cleaned, finalImage);
+            // --- End of OpenCV Pipeline ---
+
+            // Save the processed image for debugging
             var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
             var fileName = $"captcha_{timestamp}_processed.png";
             var backupDir = Path.Combine(AppContext.BaseDirectory, "captchas");
             Directory.CreateDirectory(backupDir);
             var filePath = Path.Combine(backupDir, fileName);
-            await image.SaveAsPngAsync(filePath);
+            finalImage.SaveImage(filePath);
 
-            // Load the image into Tesseract's internal format
-            using var pixImage = TesseractOCR.Pix.Image.LoadFromMemory(ms);
-            // Process the image using SingleLine page segmentation mode.
+            // Convert the final Mat to a byte array for Tesseract
+            Cv2.ImEncode(".png", finalImage, out byte[] processedImageBytes);
+
+            // Initialize and use Tesseract Engine
+            using var engine = new Engine(TessDataPath, Language, EngineMode.LstmOnly);
+            engine.SetVariable("tessedit_char_whitelist", CharWhitelist);
+
+            using var pixImage = TesseractOCR.Pix.Image.LoadFromMemory(processedImageBytes);
             using var page = engine.Process(pixImage, PageSegMode.SingleLine);
 
-            // Post-processing: Clean the result.
             var result = page.Text.Trim();
 
             return result;
