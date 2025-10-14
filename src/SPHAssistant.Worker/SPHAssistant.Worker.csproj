@@ -9,5 +9,17 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.9" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SPHAssistant.Core\SPHAssistant.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="tessdata\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
