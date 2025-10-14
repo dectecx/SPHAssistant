@@ -17,7 +17,8 @@
 * **後端框架**: .NET 8 (ASP.NET Core for Web API)
 * **通訊介面**: Line Messaging API
 * **網頁互動**: `HttpClient` (用於 API 請求), `AngleSharp` / `HtmlAgilityPack` (用於 HTML 解析)
-* **影像辨識 (OCR)**: `Tesseract` + `SixLabors.ImageSharp` (用於解析驗證碼)
+* **影像辨識 (OCR)**: `Tesseract` + `OpenCvSharp` + `SixLabors.ImageSharp` (用於解析驗證碼)
+* **日誌記錄 (Logging)**: `Serilog` (結構化日誌框架)
 * **資料庫**: 關聯式資料庫 (待定)
 * **背景任務**: `Hangfire` 或 .NET 內建的 `BackgroundService`
 
@@ -81,7 +82,7 @@ graph TD
 | | **3.2** 門診進度監控背景服務 | ⚪️ 未開始 | - | |
 | | **3.3** Line 推播通知功能 | ⚪️ 未開始 | - | |
 | | **3.4** 自動掛號排程服務 | ⚪️ 未開始 | - | |
-| **P4: 優化與部署** | **4.1** 錯誤處理與日誌記錄 | ⚪️ 未開始 | - | |
+| **P4: 優化與部署** | **4.1** 錯誤處理與日誌記錄 | ✅ 已完成 | - | |
 | | **4.2** 撰寫單元測試 | ⚪️ 未開始 | - | |
 | | **4.3** Docker 容器化 | ⚪️ 未開始 | - | |
 | | **4.4** 部署至雲端平台 | ⚪️ 未開始 | - | |
