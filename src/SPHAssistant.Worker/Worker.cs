@@ -1,5 +1,4 @@
 using SPHAssistant.Core.Interfaces;
-using SPHAssistant.Core.Models;
 using SPHAssistant.Core.Models.DTOs;
 using SPHAssistant.Core.Models.Enums;
 
@@ -39,7 +38,7 @@ public class Worker : BackgroundService
             IdNumber: "A123456789",
             BirthDate: "0101" // MMdd format
         );
-        
+
         _logger.LogInformation("Attempting to query appointment with test data: {@QueryRequest}", testRequest);
 
         var result = await _hospitalClient.QueryAppointmentAsync(testRequest);

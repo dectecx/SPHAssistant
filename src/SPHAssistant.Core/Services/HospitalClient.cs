@@ -168,7 +168,7 @@ public class HospitalClient : IHospitalClient
                     return new QueryResult(false, errorMessage, resultHtml);
                 }
             }
-            
+
             // Priority 4: Check for the "No Data Found" panel.
             var noDataPanel = resultDoc.GetElementbyId("ctl00_ContentPlaceHolder1_panelFailResult");
             if (noDataPanel != null)

@@ -1,7 +1,7 @@
+using Serilog;
 using SPHAssistant.Core.Interfaces;
 using SPHAssistant.Core.Services;
 using SPHAssistant.Worker;
-using Serilog;
 
 try
 {

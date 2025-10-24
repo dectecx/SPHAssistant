@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using OpenCvSharp;
-using SPHAssistant.Core.Interfaces;
 using SixLabors.ImageSharp.Formats.Png;
+using SPHAssistant.Core.Interfaces;
 using System.Text.RegularExpressions;
 using TesseractOCR;
 using TesseractOCR.Enums;
@@ -54,14 +54,14 @@ public class OcrService : IOcrService
             // --- OpenCV Processing Pipeline ---
             using var inverted = new Mat();
             Cv2.BitwiseNot(src, inverted);
-            
+
             using var binary = new Mat();
             Cv2.Threshold(inverted, binary, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
 
             using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
             using var cleaned = new Mat();
             Cv2.MorphologyEx(binary, cleaned, MorphTypes.Open, kernel);
-            
+
             using var finalImage = new Mat();
             Cv2.BitwiseNot(cleaned, finalImage);
             // --- End of OpenCV Pipeline ---
