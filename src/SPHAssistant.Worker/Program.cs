@@ -2,6 +2,7 @@ using Serilog;
 using SPHAssistant.Core.Interfaces;
 using SPHAssistant.Core.Services;
 using SPHAssistant.Worker;
+using SPHAssistant.Core.Infrastructure.TableGenerators;
 
 try
 {
@@ -14,6 +15,7 @@ try
         {
             services.AddSingleton<IOcrService, OcrService>();
             services.AddSingleton<IHospitalClient, HospitalClient>();
+            services.AddSingleton<ITableGenerator, MarkdownTableGenerator>();
             services.AddHostedService<Worker>();
         })
         .Build();
