@@ -11,36 +11,58 @@ namespace SPHAssistant.Worker;
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
-    private readonly IHospitalClient _hospitalClient;
+    private readonly IServiceProvider _serviceProvider;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Worker"/> class.
     /// </summary>
-    public Worker(ILogger<Worker> logger, IHospitalClient hospitalClient)
+    public Worker(ILogger<Worker> logger, IServiceProvider serviceProvider)
     {
         _logger = logger;
-        _hospitalClient = hospitalClient;
+        _serviceProvider = serviceProvider;
     }
 
-    /// <summary>
-    /// This method is called when the <see cref="IHostedService"/> starts. The implementation should start the task.
-    /// </summary>
-    /// <param name="stoppingToken">Triggered when <see cref="IHostedService.StopAsync(CancellationToken)"/> is called.</param>
-    /// <returns>A <see cref="Task"/> that represents the long running operations.</returns>
+    /// <inheritdoc/>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
 
+        // This loop simulates the worker waiting for tasks.
+        // In a real scenario, this might be triggered by a message queue, a timer, or a database check.
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            _logger.LogInformation("Starting a new work item. Creating a new scope.");
+
+            // Create a new DI scope for each unit of work.
+            // This ensures that scoped services (like HospitalClient) are unique to this work item.
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<Worker>>();
+                var hospitalClient = scope.ServiceProvider.GetRequiredService<IHospitalClient>();
+                var tableGenerator = scope.ServiceProvider.GetRequiredService<ITableGenerator>();
+
+                await RunQueryAndProcessResultAsync(scopedLogger, hospitalClient, tableGenerator);
+            }
+
+            _logger.LogInformation("Work item finished. Waiting for the next one.");
+            // For demonstration, we run once and then stop. In a real service, you'd likely have a delay.
+            // await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+            break; 
+        }
+    }
+
+    private async Task RunQueryAndProcessResultAsync(ILogger<Worker> logger, IHospitalClient hospitalClient, ITableGenerator tableGenerator)
+    {
         var testRequest = new QueryRequest(
             QueryType: QueryType.ReturningPatient,
             IdType: IdType.IdCard,
             IdNumber: "A123456789",
             BirthDate: "0101" // MMdd format
         );
-        
-        _logger.LogInformation("Attempting to query appointment with test data: {@QueryRequest}", testRequest);
 
-        var result = await _hospitalClient.QueryAppointmentAsync(testRequest);
+        logger.LogInformation("Attempting to query appointment with test data: {@QueryRequest}", testRequest);
+
+        var result = await hospitalClient.QueryAppointmentAsync(testRequest);
 
         // Handle the result using a switch expression for type safety and clarity.
         var logMessage = result switch
@@ -54,13 +76,15 @@ public class Worker : BackgroundService
             _ => "Query failed with an unexpected result type."
         };
 
-        if (result is QuerySuccess)
+        if (result is QuerySuccess success)
         {
-            _logger.LogInformation(logMessage);
+            logger.LogInformation(logMessage);
+
+            // TODO: Call the new ParseAppointmentData method and generate the table.
         }
         else
         {
-            _logger.LogError(logMessage);
+            logger.LogError(logMessage);
         }
     }
 }

@@ -73,23 +73,11 @@ public class HospitalClient : IHospitalClient
     /// <summary>
     /// Constructor
     /// </summary>
-    public HospitalClient(ILogger<HospitalClient> logger, IOcrService ocrService)
+    public HospitalClient(ILogger<HospitalClient> logger, HttpClient httpClient, IOcrService ocrService)
     {
         _logger = logger;
         _ocrService = ocrService;
-
-        var cookieContainer = new CookieContainer();
-        var handler = new HttpClientHandler
-        {
-            CookieContainer = cookieContainer,
-            AllowAutoRedirect = true
-        };
-
-        _httpClient = new HttpClient(handler)
-        {
-            BaseAddress = new Uri(BaseUrl)
-        };
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36");
+        _httpClient = httpClient;
 
         // Initialize the structured error definitions.
         _errorDefinitions = new List<ErrorDefinition>
@@ -179,6 +167,10 @@ public class HospitalClient : IHospitalClient
         }
     }
 
+    /// <summary>
+    /// Fetches the web forms state from the initial query page.
+    /// </summary>
+    /// <returns>The web forms state.</returns>
     private async Task<WebFormsState?> FetchWebFormsStateAsync()
     {
         _logger.LogInformation("Fetching initial query page to get ViewState and cookies.");
@@ -203,6 +195,10 @@ public class HospitalClient : IHospitalClient
         return new WebFormsState(viewState, viewStateGenerator!, eventValidation);
     }
 
+    /// <summary>
+    /// Recognizes the captcha image using the OCR service.
+    /// </summary>
+    /// <returns>The recognized captcha text.</returns>
     private async Task<string> RecognizeCaptchaInternalAsync()
     {
         _logger.LogInformation("Downloading captcha image.");
@@ -222,6 +218,14 @@ public class HospitalClient : IHospitalClient
         return captchaText;
     }
 
+    /// <summary>
+    /// Posts the query form to the hospital website.
+    /// </summary>
+    /// <param name="request">The query request.</param>
+    /// <param name="state">The web forms state.</param>
+    /// <param name="captchaText">The recognized captcha text.</param>
+    /// <returns>The response HTML.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the query type is invalid.</exception>
     private async Task<string> PostQueryFormAsync(QueryRequest request, WebFormsState state, string captchaText)
     {
         _logger.LogInformation("Building and posting the query form.");
@@ -253,6 +257,11 @@ public class HospitalClient : IHospitalClient
         return await postResponse.Content.ReadAsStringAsync();
     }
 
+    /// <summary>
+    /// Analyzes the response HTML for success or specific error indicators.
+    /// </summary>
+    /// <param name="resultHtml">The response HTML.</param>
+    /// <returns>The query status.</returns>
     private QueryStatus AnalyzeResponseHtml(string resultHtml)
     {
         _logger.LogInformation("Analyzing response HTML for success or specific error indicators.");
