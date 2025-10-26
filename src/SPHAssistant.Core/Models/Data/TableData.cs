@@ -14,13 +14,4 @@ public class TableData
     /// Gets or sets the list of rows. Each row is a list of strings representing the cell data.
     /// </summary>
     public required List<List<string>> Rows { get; set; }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="TableData"/> class.
-    /// </summary>
-    public TableData()
-    {
-        Headers = new List<string>();
-        Rows = new List<List<string>>();
-    }
 }

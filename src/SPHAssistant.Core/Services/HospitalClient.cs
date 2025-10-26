@@ -4,7 +4,7 @@ using SPHAssistant.Core.Interfaces;
 using SPHAssistant.Core.Models.DTOs;
 using SPHAssistant.Core.Models.Enums;
 using SPHAssistant.Core.Models.Result;
-using System.Net;
+using SPHAssistant.Core.Models.Data;
 
 namespace SPHAssistant.Core.Services;
 
@@ -280,9 +280,12 @@ public class HospitalClient : IHospitalClient
         foreach (var definition in _errorDefinitions)
         {
             var spanNode = resultDoc.GetElementbyId(definition.Id);
-            if (spanNode == null) continue;
+            if (spanNode == null)
+            {
+                continue;
+            }
 
-            bool isError = false;
+            bool isError;
             var errorMessage = spanNode.InnerText.Trim();
 
             if (definition.CheckType == ErrorCheckType.Style)
@@ -313,5 +316,49 @@ public class HospitalClient : IHospitalClient
 
         _logger.LogError("Query failed: Could not determine the result from the response HTML. It's not a known success or failure pattern.");
         return new UnknownResponse("未知的回應格式", resultHtml);
+    }
+
+    /// <inheritdoc/>
+    public TableData ParseAppointmentData(string successHtml)
+    {
+        var tableData = new TableData
+        {
+            Headers = [],
+            Rows = []
+        };
+        var doc = new HtmlDocument();
+        doc.LoadHtml(successHtml);
+
+        var tableNode = doc.GetElementbyId("ctl00_ContentPlaceHolder1_gvQueryResult");
+        if (tableNode == null)
+        {
+            _logger.LogWarning("Could not find the appointment result table ('gvQueryResult') in the provided HTML.");
+            return tableData;
+        }
+
+        // --- Extract Headers ---
+        var headerNodes = tableNode.SelectNodes(".//th");
+        if (headerNodes != null)
+        {
+            tableData.Headers = headerNodes.Select(th => th.InnerText.Trim()).ToList();
+        }
+
+        // --- Extract Rows ---
+        // We select the table body's rows, skipping the first row which is the header.
+        var rowNodes = tableNode.SelectNodes(".//tr[position()>1]");
+        if (rowNodes != null)
+        {
+            foreach (var rowNode in rowNodes)
+            {
+                var row = rowNode
+                    .SelectNodes(".//td")
+                    .Select(td => td.InnerText.Trim())
+                    .ToList();
+                tableData.Rows.Add(row);
+            }
+        }
+
+        _logger.LogInformation("Successfully parsed {RowCount} rows from the appointment table.", tableData.Rows.Count);
+        return tableData;
     }
 }

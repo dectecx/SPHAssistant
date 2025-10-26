@@ -80,7 +80,27 @@ public class Worker : BackgroundService
         {
             logger.LogInformation(logMessage);
 
-            // TODO: Call the new ParseAppointmentData method and generate the table.
+            if (string.IsNullOrEmpty(success.ResponseHtml))
+            {
+                logger.LogError("Query successful, but the response HTML is empty.");
+                return;
+            }
+
+            // Parse the HTML from the successful response to extract structured data.
+            var appointmentData = hospitalClient.ParseAppointmentData(success.ResponseHtml);
+
+            if (appointmentData.Rows.Count > 0)
+            {
+                // Generate a Markdown table from the structured data.
+                string markdownTable = tableGenerator.Generate(appointmentData);
+
+                // Log the final Markdown table.
+                logger.LogInformation("Appointment Details:\n{MarkdownTable}", markdownTable);
+            }
+            else
+            {
+                logger.LogInformation("Query was successful, but the result table was empty.");
+            }
         }
         else
         {
