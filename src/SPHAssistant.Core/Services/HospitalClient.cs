@@ -462,40 +462,64 @@ public class HospitalClient : IHospitalClient
         {
             var chunkDoc = new HtmlDocument();
             chunkDoc.LoadHtml(chunk);
+
             var spanNode = chunkDoc.DocumentNode.SelectSingleNode("//span");
-            if (spanNode == null)
-            {
-                continue;
-            }
+            var aNode = chunkDoc.DocumentNode.SelectSingleNode("//a");
 
-            var rawText = System.Net.WebUtility.HtmlDecode(spanNode.InnerText.Trim()); // e.g., "11912黃嘉苓(額滿)"
-
-            // Determine Status
+            string rawText;
             SlotStatus status;
-            if (rawText.Contains("(額滿)"))
+
+            if (spanNode != null)
             {
-                status = SlotStatus.Full;
+                // Case 1: Status is indicated in a <span> (e.g., Full, NoClinic)
+                rawText = System.Net.WebUtility.HtmlDecode(spanNode.InnerText.Trim());
+                if (rawText.Contains("(額滿)"))
+                {
+                    status = SlotStatus.Full;
+                }
+                else if (rawText.Contains("(停診)"))
+                {
+                    status = SlotStatus.NoClinic;
+                }
+                else
+                {
+                    // Should not happen often
+                    status = SlotStatus.Unknown;
+                }
             }
-            else if (rawText.Contains("(停診)"))
+            else if (aNode != null)
             {
-                status = SlotStatus.NoClinic;
+                // Case 2: Only an <a> tag is present, indicating an available slot.
+                rawText = System.Net.WebUtility.HtmlDecode(aNode.InnerText.Trim());
+                status = SlotStatus.Available;
             }
             else
             {
-                // If no specific status text is found, assume it's available.
-                // The presence of a registration link confirms this.
-                var linkNode = chunkDoc.DocumentNode.SelectSingleNode("//a");
-                status = linkNode != null ? SlotStatus.Available : SlotStatus.Unknown;
+                // Skip if the chunk contains neither a span nor a link
+                continue;
             }
 
             // Extract ID and Name from the start of the string
             var nameAndIdText = Regex.Replace(rawText, @"\s*\([\s\S]*\)", "").Trim();
-            var match = Regex.Match(nameAndIdText, @"^(\d+)(.*)");
+            var match = Regex.Match(nameAndIdText, @"^(\d*)(.*)");
 
             if (match.Success)
             {
                 var doctorId = match.Groups[1].Value;
                 var doctorName = match.Groups[2].Value.Trim();
+
+                // Handle cases where ID might be part of the doctor name in <a> tag but not span
+                if (string.IsNullOrEmpty(doctorId) && aNode != null)
+                {
+                    var aText = System.Net.WebUtility.HtmlDecode(aNode.InnerText.Trim());
+                    var aMatch = Regex.Match(aText, @"^(\d+)(.*)");
+                    if (aMatch.Success)
+                    {
+                        doctorId = aMatch.Groups[1].Value;
+                        doctorName = aMatch.Groups[2].Value.Trim();
+                    }
+                }
+
                 slots.Add(new AppointmentSlot(new Doctor(doctorId, doctorName), status, rawText));
             }
         }
