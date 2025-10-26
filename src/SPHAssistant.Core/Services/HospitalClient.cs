@@ -5,6 +5,8 @@ using SPHAssistant.Core.Models.DTOs;
 using SPHAssistant.Core.Models.Enums;
 using SPHAssistant.Core.Models.Result;
 using SPHAssistant.Core.Models.Data;
+using SPHAssistant.Core.Models.TimeTable;
+using System.Text.RegularExpressions;
 
 namespace SPHAssistant.Core.Services;
 
@@ -360,5 +362,143 @@ public class HospitalClient : IHospitalClient
 
         _logger.LogInformation("Successfully parsed {RowCount} rows from the appointment table.", tableData.Rows.Count);
         return tableData;
+    }
+
+    /// <inheritdoc/>
+    public async Task<DepartmentTimeTable?> GetTimeTableAsync(string departmentCode)
+    {
+        _logger.LogInformation("Fetching timetable for department code: {DepartmentCode}", departmentCode);
+        try
+        {
+            var url = $"RMSTimeTable.aspx?dpt={departmentCode}";
+            var html = await _httpClient.GetStringAsync(url);
+
+            var doc = new HtmlDocument();
+            doc.LoadHtml(html);
+
+            // Get department name from our static data service instead of parsing the page.
+            var departmentName = DepartmentDataService.GetDepartmentName(departmentCode);
+
+            var timeTable = new DepartmentTimeTable
+            {
+                DepartmentCode = departmentCode,
+                DepartmentName = departmentName
+            };
+
+            // The main content table is nested. A reliable selector is to find the one with the specific "tableStyle" class.
+            var tableNode = doc.DocumentNode.SelectSingleNode("//table[@class='tableStyle']");
+            if (tableNode == null)
+            {
+                _logger.LogWarning("Timetable table 'gvDpt' not found for department {DepartmentCode}.", departmentCode);
+                return timeTable;
+            }
+
+            // Select all rows with a specific border style, skipping the first empty header row.
+            var rowNodes = tableNode.SelectNodes(".//tr[contains(@style, 'border-color:#d4d0c8') and position()>1]");
+            if (rowNodes == null) return timeTable;
+
+            foreach (var rowNode in rowNodes)
+            {
+                var cells = rowNode.SelectNodes(".//td");
+                if (cells == null || cells.Count < 4)
+                {
+                    // Expect at least 4 cells: Date, Morning, Afternoon, Night
+                    continue;
+                }
+
+                var dailyTimeTable = new DailyTimeTable();
+
+                // Cell 0: Date. The format is "YYYY年MM月DD日<br>(...)"
+                var dateHtml = cells[0].InnerHtml;
+                var datePart = dateHtml.Split(new[] { "<br>" }, StringSplitOptions.None)[0];
+                var parsableDateString = datePart.Replace("年", "/").Replace("月", "/").Replace("日", "").Trim();
+                if (!DateOnly.TryParse(parsableDateString, out var date))
+                {
+                    continue; // Skip row if date is invalid
+                }
+                dailyTimeTable.Date = date;
+
+                // Cell 1: Morning Slots
+                dailyTimeTable.MorningSlots = ParseSlotsFromCell(cells[1]);
+
+                // Cell 2: Afternoon Slots
+                dailyTimeTable.AfternoonSlots = ParseSlotsFromCell(cells[2]);
+
+                // Cell 3: Night Slots
+                dailyTimeTable.NightSlots = ParseSlotsFromCell(cells[3]);
+
+                timeTable.DailyTimeTables.Add(dailyTimeTable);
+            }
+
+            return timeTable;
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Failed to fetch timetable for department {DepartmentCode} due to an HTTP error.", departmentCode);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "An unexpected error occurred while parsing the timetable for department {DepartmentCode}.", departmentCode);
+            return null;
+        }
+    }
+
+    private List<AppointmentSlot> ParseSlotsFromCell(HtmlNode cell)
+    {
+        var slots = new List<AppointmentSlot>();
+        var innerHtml = cell.InnerHtml.Trim();
+
+        // If the cell is empty or just a non-breaking space, there are no clinics.
+        if (string.IsNullOrEmpty(innerHtml) || innerHtml == "&nbsp;")
+        {
+            return slots;
+        }
+
+        // Each doctor's info is separated by a <br> tag.
+        var doctorHtmlChunks = innerHtml.Split(new[] { "<br>" }, StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var chunk in doctorHtmlChunks)
+        {
+            var chunkDoc = new HtmlDocument();
+            chunkDoc.LoadHtml(chunk);
+            var spanNode = chunkDoc.DocumentNode.SelectSingleNode("//span");
+            if (spanNode == null)
+            {
+                continue;
+            }
+
+            var rawText = System.Net.WebUtility.HtmlDecode(spanNode.InnerText.Trim()); // e.g., "11912黃嘉苓(額滿)"
+
+            // Determine Status
+            SlotStatus status;
+            if (rawText.Contains("(額滿)"))
+            {
+                status = SlotStatus.Full;
+            }
+            else if (rawText.Contains("(停診)"))
+            {
+                status = SlotStatus.NoClinic;
+            }
+            else
+            {
+                // If no specific status text is found, assume it's available.
+                // The presence of a registration link confirms this.
+                var linkNode = chunkDoc.DocumentNode.SelectSingleNode("//a");
+                status = linkNode != null ? SlotStatus.Available : SlotStatus.Unknown;
+            }
+
+            // Extract ID and Name from the start of the string
+            var nameAndIdText = Regex.Replace(rawText, @"\s*\([\s\S]*\)", "").Trim();
+            var match = Regex.Match(nameAndIdText, @"^(\d+)(.*)");
+
+            if (match.Success)
+            {
+                var doctorId = match.Groups[1].Value;
+                var doctorName = match.Groups[2].Value.Trim();
+                slots.Add(new AppointmentSlot(new Doctor(doctorId, doctorName), status, rawText));
+            }
+        }
+        return slots;
     }
 }
