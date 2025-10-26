@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using SPHAssistant.Core.Interfaces;
 using SPHAssistant.Core.Models.DTOs;
 using SPHAssistant.Core.Models.Enums;
+using SPHAssistant.Core.Models.Result;
 using System.Net;
 
 namespace SPHAssistant.Core.Services;
@@ -16,12 +17,62 @@ public class HospitalClient : IHospitalClient
     private readonly IOcrService _ocrService;
     private readonly ILogger<HospitalClient> _logger;
     private static readonly Random _random = new();
+
+    /// <summary>
+    /// The base URL of the hospital website.
+    /// </summary>
     private const string BaseUrl = "https://rms.sph.org.tw/";
+
+    /// <summary>
+    /// The URL of the query page.
+    /// </summary>
     private const string QueryPageUrl = "Query.aspx?loc=S";
+
+    /// <summary>
+    /// The URL of the captcha page.
+    /// </summary>
     private const string CaptchaUrl = "ValidateCode.aspx";
 
+    /// <summary>
+    /// Represents the web forms state.
+    /// </summary>
+    /// <param name="ViewState">The view state of the web forms.</param>
+    /// <param name="ViewStateGenerator">The view state generator of the web forms.</param>
+    /// <param name="EventValidation">The event validation of the web forms.</param>
     private record WebFormsState(string ViewState, string ViewStateGenerator, string EventValidation);
 
+    /// <summary>
+    /// Defines the type of error check to perform on the span node.
+    /// </summary>
+    private enum ErrorCheckType
+    {
+        /// <summary>
+        /// Check the style of the span node. If the style contains "display:none" or "visibility:hidden", then it is not an error.
+        /// </summary>
+        Style,
+
+        /// <summary>
+        /// Check the inner text of the span node. If the inner text is not empty, then it is an error.
+        /// </summary>
+        InnerText
+    }
+
+    /// <summary>
+    /// Represents the error definition.
+    /// </summary>
+    /// <param name="Id">The ID of the span node.</param>
+    /// <param name="CheckType">The type of error check to perform on the span node.</param>
+    /// <param name="CreateStatus">The function to create the status.</param>
+    private record ErrorDefinition(string Id, ErrorCheckType CheckType, Func<string, string, QueryStatus> CreateStatus);
+
+    /// <summary>
+    /// The list of error definitions.
+    /// </summary>
+    private readonly List<ErrorDefinition> _errorDefinitions;
+
+    /// <summary>
+    /// Constructor
+    /// </summary>
     public HospitalClient(ILogger<HospitalClient> logger, IOcrService ocrService)
     {
         _logger = logger;
@@ -34,44 +85,97 @@ public class HospitalClient : IHospitalClient
             AllowAutoRedirect = true
         };
 
-        _httpClient = new HttpClient(handler) { BaseAddress = new Uri(BaseUrl) };
+        _httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(BaseUrl)
+        };
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36");
+
+        // Initialize the structured error definitions.
+        _errorDefinitions = new List<ErrorDefinition>
+        {
+            // 輸入的值與圖片中的不符
+            new("ctl00_ContentPlaceHolder1_validateImg", ErrorCheckType.Style, (msg, html) => new CaptchaError(msg, html)),
+            // 出生日期不可為空白!
+            new("ctl00_ContentPlaceHolder1_validatBirthday1", ErrorCheckType.Style, (msg, html) => new ValidationError(msg, html)),
+            // 出生日期輸入格式錯誤!
+            new("ctl00_ContentPlaceHolder1_validatBirthday2", ErrorCheckType.Style, (msg, html) => new ValidationError(msg, html)),
+            // 身份證字號輸入格式錯誤! or 身分證字號、病歷號或居留證號請擇一輸入，身分資料不可為空白!
+            new("ctl00_ContentPlaceHolder1_validateInputS", ErrorCheckType.InnerText, (msg, html) => new ValidationError(msg, html)),
+            // 您選擇的身分類型<複診>， 查詢院區<聖保祿醫院>，請確認是否正確!
+            new("ctl00_ContentPlaceHolder1_txtInputSError", ErrorCheckType.InnerText, (msg, html) => new ValidationError(msg, html)),
+            // 您輸入的出生日期有誤，請再次確認!
+            new("ctl00_ContentPlaceHolder1_labBirthError", ErrorCheckType.InnerText, (msg, html) => new ValidationError(msg, html))
+        };
     }
 
     /// <inheritdoc/>
-    public async Task<QueryResult> QueryAppointmentAsync(QueryRequest request)
+    public async Task<QueryStatus> QueryAppointmentAsync(QueryRequest request)
     {
+        const int maxCaptchaRetries = 5;
+        QueryStatus? finalResult = null;
+
         try
         {
-            // Step 1: Get session cookies and initial Web Forms state.
+            // Step 1: Get session cookies and initial Web Forms state. This only needs to be done once.
             var webFormsState = await FetchWebFormsStateAsync();
             if (webFormsState is null)
             {
-                return new QueryResult(false, "Failed to parse initial page state.");
+                return new OperationError("Failed to parse initial page state.");
             }
 
-            // Step 2: Recognize the captcha.
-            var captchaText = await RecognizeCaptchaInternalAsync();
-            if (string.IsNullOrEmpty(captchaText))
+            for (int attempt = 1; attempt <= maxCaptchaRetries; attempt++)
             {
-                return new QueryResult(false, "Captcha recognition failed.");
+                _logger.LogInformation("Captcha attempt {Attempt}/{MaxAttempts}", attempt, maxCaptchaRetries);
+
+                // Step 2: Recognize the captcha. 4 characters are expected.
+                var captchaText = await RecognizeCaptchaInternalAsync();
+                if (string.IsNullOrEmpty(captchaText) || captchaText.Length != 4)
+                {
+                    _logger.LogWarning("Captcha attempt {Attempt} failed: The captcha is not recognized or the length is not 4. Captcha text: {CaptchaText}. Retrying in 1 second...", attempt, captchaText);
+                    await Task.Delay(1000);
+                    continue;
+                }
+
+                // Step 3: Post the form.
+                var resultHtml = await PostQueryFormAsync(request, webFormsState, captchaText);
+
+                // Step 4: Analyze the response.
+                finalResult = AnalyzeResponseHtml(resultHtml);
+
+                // If the query is a captcha error, retry the captcha.
+                if (finalResult is CaptchaError)
+                {
+                    if (attempt >= maxCaptchaRetries)
+                    {
+                        _logger.LogError("Failed to query appointment after {MaxAttempts} captcha attempts.", maxCaptchaRetries);
+                        return new OperationError($"Failed to query appointment after {maxCaptchaRetries} captcha attempts. The captcha is still not recognized.");
+                    }
+
+                    // Wait 1 second before the next attempt
+                    _logger.LogWarning("Captcha attempt {Attempt} failed: {Message}. Retrying in 1 second...", attempt, finalResult.Message);
+                    await Task.Delay(1000);
+                    continue;
+                }
+
+                // If the query is successful or a definitive failure that is NOT a captcha error, exit the retry loop.
+                _logger.LogInformation("Query successful or a definitive failure that is NOT a captcha error. Exiting retry loop. Final status: {StatusType}", finalResult.GetType().Name);
+                break;
             }
 
-            // Step 3: Post the form.
-            var resultHtml = await PostQueryFormAsync(request, webFormsState, captchaText);
-
-            // Step 4: Analyze the response.
-            return AnalyzeResponseHtml(resultHtml);
+            // If the final result is still null, set it to an operation error.
+            finalResult ??= new OperationError($"Failed to query appointment after {maxCaptchaRetries} attempts.");
+            return finalResult;
         }
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "An HTTP error occurred while communicating with the hospital website.");
-            return new QueryResult(false, $"HTTP Error: {ex.Message}");
+            return new OperationError($"HTTP Error: {ex.Message}");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "An unexpected error occurred in HospitalClient.");
-            return new QueryResult(false, $"Unexpected Error: {ex.Message}");
+            return new OperationError($"Unexpected Error: {ex.Message}");
         }
     }
 
@@ -149,66 +253,56 @@ public class HospitalClient : IHospitalClient
         return await postResponse.Content.ReadAsStringAsync();
     }
 
-    private QueryResult AnalyzeResponseHtml(string resultHtml)
+    private QueryStatus AnalyzeResponseHtml(string resultHtml)
     {
         _logger.LogInformation("Analyzing response HTML for success or specific error indicators.");
         var resultDoc = new HtmlDocument();
         resultDoc.LoadHtml(resultHtml);
 
+        // Priority 1: Check for the success table.
         var successTable = resultDoc.GetElementbyId("ctl00_ContentPlaceHolder1_gvQueryResult");
         if (successTable != null)
         {
             _logger.LogInformation("Query successful: Found the result table 'gvQueryResult'.");
-            return new QueryResult(true, "查詢成功", resultHtml);
+            return new QuerySuccess(resultHtml);
         }
 
-        var styleBasedErrorSpans = new Dictionary<string, string>
+        // Priority 2: Check against the structured error definitions.
+        foreach (var definition in _errorDefinitions)
         {
-            { "ctl00_ContentPlaceHolder1_validatBirthday1", "出生日期不可為空白!" },
-            { "ctl00_ContentPlaceHolder1_validatBirthday2", "出生日期輸入格式錯誤!" },
-            { "ctl00_ContentPlaceHolder1_validateImg", "輸入的值與圖片中的不符" }
-        };
-        foreach (var errorSpan in styleBasedErrorSpans)
-        {
-            var spanNode = resultDoc.GetElementbyId(errorSpan.Key);
-            if (spanNode != null)
+            var spanNode = resultDoc.GetElementbyId(definition.Id);
+            if (spanNode == null) continue;
+
+            bool isError = false;
+            var errorMessage = spanNode.InnerText.Trim();
+
+            if (definition.CheckType == ErrorCheckType.Style)
             {
                 var style = spanNode.GetAttributeValue("style", "");
-                if (!style.Contains("display:none") && !style.Contains("visibility:hidden"))
-                {
-                    var errorMessage = spanNode.InnerText.Trim();
-                    _logger.LogWarning("Query failed: A visible style-based error span was found. ID: {SpanId}, Message: {ErrorMessage}", errorSpan.Key, errorMessage);
-                    return new QueryResult(false, string.IsNullOrEmpty(errorMessage) ? errorSpan.Value : errorMessage, resultHtml);
-                }
+                isError = !style.Contains("display:none") && !style.Contains("visibility:hidden");
             }
-        }
-
-        var textBasedErrorSpans = new[]
-        {
-            "ctl00_ContentPlaceHolder1_validateInputS",
-            "ctl00_ContentPlaceHolder1_txtInputSError",
-            "ctl00_ContentPlaceHolder1_labBirthError"
-        };
-        foreach (var spanId in textBasedErrorSpans)
-        {
-            var spanNode = resultDoc.GetElementbyId(spanId);
-            if (spanNode != null && !string.IsNullOrWhiteSpace(spanNode.InnerText))
+            else // InnerText
             {
-                var errorMessage = spanNode.InnerText.Trim();
-                _logger.LogWarning("Query failed: An InnerText-based error span was found. ID: {SpanId}, Message: {ErrorMessage}", spanId, errorMessage);
-                return new QueryResult(false, errorMessage, resultHtml);
+                isError = !string.IsNullOrWhiteSpace(errorMessage);
+            }
+
+            if (isError)
+            {
+                _logger.LogWarning("Query failed: A known error pattern was detected. ID: {SpanId}, Message: {ErrorMessage}", definition.Id, errorMessage);
+                return definition.CreateStatus(errorMessage, resultHtml);
             }
         }
 
+        // Priority 3: Check for the "No Data Found" panel.
         var noDataPanel = resultDoc.GetElementbyId("ctl00_ContentPlaceHolder1_panelFailResult");
         if (noDataPanel != null)
         {
             var noDataMessage = noDataPanel.SelectSingleNode(".//strong")?.InnerText.Trim() ?? "目前查無您的掛號資料!";
             _logger.LogWarning("Query failed: The 'No Data Found' panel was displayed. Message: {Message}", noDataMessage);
-            return new QueryResult(false, noDataMessage, resultHtml);
+            return new DataNotFound(noDataMessage, resultHtml);
         }
 
         _logger.LogError("Query failed: Could not determine the result from the response HTML. It's not a known success or failure pattern.");
-        return new QueryResult(false, "未知的回應格式", resultHtml);
+        return new UnknownResponse("未知的回應格式", resultHtml);
     }
 }

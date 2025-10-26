@@ -1,6 +1,7 @@
 using SPHAssistant.Core.Interfaces;
 using SPHAssistant.Core.Models.DTOs;
 using SPHAssistant.Core.Models.Enums;
+using SPHAssistant.Core.Models.Result;
 
 namespace SPHAssistant.Worker;
 
@@ -15,8 +16,6 @@ public class Worker : BackgroundService
     /// <summary>
     /// Initializes a new instance of the <see cref="Worker"/> class.
     /// </summary>
-    /// <param name="logger">The logger instance.</param>
-    /// <param name="hospitalClient">The client for interacting with the hospital website.</param>
     public Worker(ILogger<Worker> logger, IHospitalClient hospitalClient)
     {
         _logger = logger;
@@ -38,19 +37,30 @@ public class Worker : BackgroundService
             IdNumber: "A123456789",
             BirthDate: "0101" // MMdd format
         );
-
+        
         _logger.LogInformation("Attempting to query appointment with test data: {@QueryRequest}", testRequest);
 
         var result = await _hospitalClient.QueryAppointmentAsync(testRequest);
 
-        if (result.IsSuccess)
+        // Handle the result using a switch expression for type safety and clarity.
+        var logMessage = result switch
         {
-            _logger.LogInformation("Query successful. Message: {Message}", result.Message);
-            // In a real scenario, you would parse result.ResponseHtml here.
+            QuerySuccess => $"Query successful. HTML length: {result.ResponseHtml?.Length ?? 0}",
+            CaptchaError => $"Query failed: Captcha error. Message: {result.Message}",
+            DataNotFound => $"Query failed: Data not found. Message: {result.Message}",
+            ValidationError => $"Query failed: Validation error. Message: {result.Message}",
+            OperationError => $"Query failed: Operation error. Message: {result.Message}",
+            UnknownResponse => $"Query failed: Unknown response from server. Message: {result.Message}",
+            _ => "Query failed with an unexpected result type."
+        };
+
+        if (result is QuerySuccess)
+        {
+            _logger.LogInformation(logMessage);
         }
         else
         {
-            _logger.LogError("Query failed. Message: {Message}", result.Message);
+            _logger.LogError(logMessage);
         }
     }
 }
