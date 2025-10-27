@@ -40,11 +40,10 @@ public class Worker : BackgroundService
             {
                 var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<Worker>>();
                 var hospitalClient = scope.ServiceProvider.GetRequiredService<IHospitalClient>();
-                var tableGenerator = scope.ServiceProvider.GetRequiredService<ITableGenerator>();
+                var queryService = scope.ServiceProvider.GetRequiredService<ITimeTableQueryService>();
 
                 // --- Test fetching and parsing the timetable ---
-                await RunTimeTableTestAsync(scopedLogger, hospitalClient);
-
+                await RunTimeTableTestAsync(scopedLogger, hospitalClient, queryService);
 
                 // --- Keep the existing query logic for now ---
                 // await RunQueryAndProcessResultAsync(scopedLogger, hospitalClient, tableGenerator);
@@ -57,10 +56,10 @@ public class Worker : BackgroundService
         }
     }
 
-    private async Task RunTimeTableTestAsync(ILogger<Worker> logger, IHospitalClient hospitalClient)
+    private async Task RunTimeTableTestAsync(ILogger<Worker> logger, IHospitalClient hospitalClient, ITimeTableQueryService queryService)
     {
         // Test with "Orthopedics" department
-        var departmentCode = "S2700A";
+        var departmentCode = "S3700A";
         logger.LogInformation("--- Starting Timetable Test for Department: {DepartmentCode} ---", departmentCode);
 
         var timeTable = await hospitalClient.GetTimeTableAsync(departmentCode);
@@ -81,6 +80,24 @@ public class Worker : BackgroundService
                     LogSlotsForSession(logger, "   Afternoon", afternoonSlots);
                     LogSlotsForSession(logger, "   Night", nightSlots);
                 }
+            }
+
+            // --- Test Querying for a specific doctor ---
+            var doctorToFind = "徐海蓓";
+            logger.LogInformation("--- Querying slots for Doctor: {DoctorName} ---", doctorToFind);
+            var doctorSlots = queryService.FindSlotsByDoctor(timeTable, doctorToFind, onlyAvailable: false);
+
+            if (doctorSlots.Count > 0)
+            {
+                foreach (var entry in doctorSlots)
+                {
+                    logger.LogInformation("-> On Date: {Date}", entry.Key);
+                    LogSlotsForSession(logger, "   Available Sessions", entry.Value);
+                }
+            }
+            else
+            {
+                logger.LogInformation("No slots found for doctor '{DoctorName}' in the fetched timetable.", doctorToFind);
             }
         }
         else

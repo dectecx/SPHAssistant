@@ -27,8 +27,10 @@ try
                 AllowAutoRedirect = true
             });
 
+            // Singleton: A single instance for the entire application lifetime.
             services.AddSingleton<IOcrService, OcrService>();
             services.AddSingleton<ITableGenerator, MarkdownTableGenerator>();
+            services.AddSingleton<ITimeTableQueryService, TimeTableQueryService>();
             
             services.AddHostedService<Worker>();
         })
