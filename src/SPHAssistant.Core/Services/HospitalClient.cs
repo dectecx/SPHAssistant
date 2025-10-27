@@ -7,6 +7,7 @@ using SPHAssistant.Core.Models.Result;
 using SPHAssistant.Core.Models.Data;
 using SPHAssistant.Core.Models.TimeTable;
 using System.Text.RegularExpressions;
+using SPHAssistant.Core.Models.Booking;
 
 namespace SPHAssistant.Core.Services;
 
@@ -468,6 +469,7 @@ public class HospitalClient : IHospitalClient
 
             string rawText;
             SlotStatus status;
+            BookingParameters? bookingParams = null;
 
             if (spanNode != null)
             {
@@ -489,9 +491,43 @@ public class HospitalClient : IHospitalClient
             }
             else if (aNode != null)
             {
-                // Case 2: Only an <a> tag is present, indicating an available slot.
+                // Case 2: An <a> tag is present, indicating an available slot.
                 rawText = System.Net.WebUtility.HtmlDecode(aNode.InnerText.Trim());
                 status = SlotStatus.Available;
+
+                // Attempt to parse the booking parameters from the href attribute.
+                var href = aNode.GetAttributeValue("href", "");
+                if (!string.IsNullOrEmpty(href) && href.StartsWith("Login.aspx"))
+                {
+                    try
+                    {
+                        var queryIndex = href.IndexOf('?');
+                        if (queryIndex == -1 || queryIndex == href.Length - 1)
+                        {
+                            _logger.LogWarning("Malformed booking URL found (missing or empty query string): {Href}", href);
+                        }
+                        else
+                        {
+                            var queryString = href.Substring(queryIndex + 1);
+                            var queryParams = queryString.Split('&')
+                                .Select(p => p.Split('='))
+                                .Where(p => p.Length == 2)
+                                .ToDictionary(p => p[0], p => System.Net.WebUtility.UrlDecode(p[1]));
+
+                            if (queryParams.TryGetValue("rmsData", out var rmsData) &&
+                                queryParams.TryGetValue("dptName", out var dptName) &&
+                                queryParams.TryGetValue("dpt", out var dpt) &&
+                                queryParams.TryGetValue("dptDptuid", out var dptDptuid))
+                            {
+                                bookingParams = new BookingParameters(rmsData, dptName, dpt, dptDptuid);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to parse booking parameters from href: {Href}", href);
+                    }
+                }
             }
             else
             {
@@ -520,7 +556,7 @@ public class HospitalClient : IHospitalClient
                     }
                 }
 
-                slots.Add(new AppointmentSlot(new Doctor(doctorId, doctorName), status, rawText));
+                slots.Add(new AppointmentSlot(new Doctor(doctorId, doctorName), status, rawText, bookingParams));
             }
         }
         return slots;
