@@ -67,54 +67,46 @@ public class Worker : BackgroundService
         if (timeTable != null)
         {
             logger.LogInformation("Successfully fetched timetable for {DepartmentName} ({DepartmentCode})", timeTable.DepartmentName, timeTable.DepartmentCode);
-            foreach (var daily in timeTable.DailyTimeTables)
-            {
-                var morningSlots = daily.MorningSlots;
-                var afternoonSlots = daily.AfternoonSlots;
-                var nightSlots = daily.NightSlots;
 
-                if (morningSlots.Count > 0 || afternoonSlots.Count > 0 || nightSlots.Count > 0)
-                {
-                    logger.LogInformation("-> Date: {Date}", daily.Date);
-                    LogSlotsForSession(logger, "   Morning", morningSlots);
-                    LogSlotsForSession(logger, "   Afternoon", afternoonSlots);
-                    LogSlotsForSession(logger, "   Night", nightSlots);
-                }
-            }
-
-            // --- Test Querying for a specific doctor ---
+            // --- Test 1: Find a specific doctor's schedule in the next 7 days ---
             var doctorToFind = "徐海蓓";
-            logger.LogInformation("--- Querying slots for Doctor: {DoctorName} ---", doctorToFind);
-            var doctorSlots = queryService.FindSlotsByDoctor(timeTable, doctorToFind, onlyAvailable: false);
+            var startDate = DateOnly.FromDateTime(DateTime.Today);
+            var endDate = startDate.AddDays(7);
+            logger.LogInformation("--- Querying slots for Doctor '{DoctorName}' between {StartDate} and {EndDate} ---", doctorToFind, startDate, endDate);
+            
+            var doctorSlots = queryService.FindSlotsByDoctor(timeTable, doctorToFind, startDate: startDate, endDate: endDate, onlyAvailable: false);
 
             if (doctorSlots.Count > 0)
             {
                 foreach (var entry in doctorSlots)
                 {
                     logger.LogInformation("-> On Date: {Date}", entry.Key);
-                    LogSlotsForSession(logger, "   Available Sessions", entry.Value);
+                    LogSlotsForSession(logger, "   Sessions", entry.Value);
                 }
             }
             else
             {
-                logger.LogInformation("No slots found for doctor '{DoctorName}' in the fetched timetable.", doctorToFind);
+                logger.LogInformation("No slots found for doctor '{DoctorName}' in the specified date range.", doctorToFind);
             }
 
-            // --- Test Querying for a specific date ---
-            var dateToFind = DateOnly.FromDateTime(DateTime.Today.AddDays(14));
-            logger.LogInformation("--- Querying timetable for Date: {Date} ---", dateToFind);
-            var dailyResult = queryService.FindSlotsByDate(timeTable, dateToFind);
+            // --- Test 2: Find all available slots in the next 3 days ---
+            var endDate2 = startDate.AddDays(3);
+            logger.LogInformation("--- Querying all AVAILABLE schedules between {StartDate} and {EndDate2} ---", startDate, endDate2);
+            var availableSchedules = queryService.FindDailySchedulesByDateRange(timeTable, startDate: startDate, endDate: endDate2, onlyAvailable: true);
 
-            if (dailyResult != null)
+            if (availableSchedules.Count > 0)
             {
-                logger.LogInformation("-> Found Timetable for {Date}:", dailyResult.Date);
-                LogSlotsForSession(logger, "   Morning", dailyResult.MorningSlots);
-                LogSlotsForSession(logger, "   Afternoon", dailyResult.AfternoonSlots);
-                LogSlotsForSession(logger, "   Night", dailyResult.NightSlots);
+                foreach (var entry in availableSchedules)
+                {
+                    logger.LogInformation("-> Date: {Date}", entry.Key);
+                    LogSlotsForSession(logger, "   Available Morning", entry.Value.MorningSlots);
+                    LogSlotsForSession(logger, "   Available Afternoon", entry.Value.AfternoonSlots);
+                    LogSlotsForSession(logger, "   Available Night", entry.Value.NightSlots);
+                }
             }
             else
             {
-                logger.LogInformation("No timetable found for the date {Date}.", dateToFind);
+                logger.LogInformation("No available slots found in the specified date range.");
             }
         }
         else
