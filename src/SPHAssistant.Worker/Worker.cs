@@ -99,6 +99,23 @@ public class Worker : BackgroundService
             {
                 logger.LogInformation("No slots found for doctor '{DoctorName}' in the fetched timetable.", doctorToFind);
             }
+
+            // --- Test Querying for a specific date ---
+            var dateToFind = DateOnly.FromDateTime(DateTime.Today.AddDays(14));
+            logger.LogInformation("--- Querying timetable for Date: {Date} ---", dateToFind);
+            var dailyResult = queryService.FindSlotsByDate(timeTable, dateToFind);
+
+            if (dailyResult != null)
+            {
+                logger.LogInformation("-> Found Timetable for {Date}:", dailyResult.Date);
+                LogSlotsForSession(logger, "   Morning", dailyResult.MorningSlots);
+                LogSlotsForSession(logger, "   Afternoon", dailyResult.AfternoonSlots);
+                LogSlotsForSession(logger, "   Night", dailyResult.NightSlots);
+            }
+            else
+            {
+                logger.LogInformation("No timetable found for the date {Date}.", dateToFind);
+            }
         }
         else
         {

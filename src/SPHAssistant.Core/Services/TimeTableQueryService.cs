@@ -35,4 +35,10 @@ public class TimeTableQueryService : ITimeTableQueryService
 
         return results;
     }
+
+    /// <inheritdoc/>
+    public DailyTimeTable? FindSlotsByDate(DepartmentTimeTable timeTable, DateOnly date)
+    {
+        return timeTable.DailyTimeTables.FirstOrDefault(daily => daily.Date == date);
+    }
 }

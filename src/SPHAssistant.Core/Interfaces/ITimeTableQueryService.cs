@@ -15,4 +15,12 @@ public interface ITimeTableQueryService
     /// <param name="onlyAvailable">If true, only returns slots that are currently available for booking.</param>
     /// <returns>A dictionary where the key is the date and the value is a list of appointment slots for that doctor on that day.</returns>
     Dictionary<DateOnly, List<AppointmentSlot>> FindSlotsByDoctor(DepartmentTimeTable timeTable, string doctorName, bool onlyAvailable = true);
+
+    /// <summary>
+    /// Finds the timetable for a specific date.
+    /// </summary>
+    /// <param name="timeTable">The complete timetable for a department.</param>
+    /// <param name="date">The specific date to find.</param>
+    /// <returns>A <see cref="DailyTimeTable"/> for the specified date, or null if not found.</returns>
+    DailyTimeTable? FindSlotsByDate(DepartmentTimeTable timeTable, DateOnly date);
 }
