@@ -8,6 +8,7 @@ using SPHAssistant.Core.Models.Data;
 using SPHAssistant.Core.Models.TimeTable;
 using System.Text.RegularExpressions;
 using SPHAssistant.Core.Models.Booking;
+using SPHAssistant.Core.Models.Internal;
 
 namespace SPHAssistant.Core.Services;
 
@@ -16,15 +17,10 @@ namespace SPHAssistant.Core.Services;
 /// </summary>
 public class HospitalClient : IHospitalClient
 {
+    private readonly ILogger<HospitalClient> _logger;
     private readonly HttpClient _httpClient;
     private readonly IOcrService _ocrService;
-    private readonly ILogger<HospitalClient> _logger;
     private static readonly Random _random = new();
-
-    /// <summary>
-    /// The base URL of the hospital website.
-    /// </summary>
-    private const string BaseUrl = "https://rms.sph.org.tw/";
 
     /// <summary>
     /// The URL of the query page.
@@ -35,14 +31,6 @@ public class HospitalClient : IHospitalClient
     /// The URL of the captcha page.
     /// </summary>
     private const string CaptchaUrl = "ValidateCode.aspx";
-
-    /// <summary>
-    /// Represents the web forms state.
-    /// </summary>
-    /// <param name="ViewState">The view state of the web forms.</param>
-    /// <param name="ViewStateGenerator">The view state generator of the web forms.</param>
-    /// <param name="EventValidation">The event validation of the web forms.</param>
-    private record WebFormsState(string ViewState, string ViewStateGenerator, string EventValidation);
 
     /// <summary>
     /// Defines the type of error check to perform on the span node.
@@ -120,7 +108,7 @@ public class HospitalClient : IHospitalClient
                 _logger.LogInformation("Captcha attempt {Attempt}/{MaxAttempts}", attempt, maxCaptchaRetries);
 
                 // Step 2: Recognize the captcha. 4 characters are expected.
-                var captchaText = await RecognizeCaptchaInternalAsync();
+                var captchaText = await RecognizeCaptchaAsync();
                 if (string.IsNullOrEmpty(captchaText) || captchaText.Length != 4)
                 {
                     _logger.LogWarning("Captcha attempt {Attempt} failed: The captcha is not recognized or the length is not 4. Captcha text: {CaptchaText}. Retrying in 1 second...", attempt, captchaText);
@@ -130,6 +118,10 @@ public class HospitalClient : IHospitalClient
 
                 // Step 3: Post the form.
                 var resultHtml = await PostQueryFormAsync(request, webFormsState, captchaText);
+                if (string.IsNullOrEmpty(resultHtml))
+                {
+                    return new OperationError("Failed to get a response after posting the query form.");
+                }
 
                 // Step 4: Analyze the response.
                 finalResult = AnalyzeResponseHtml(resultHtml);
@@ -177,9 +169,10 @@ public class HospitalClient : IHospitalClient
     private async Task<WebFormsState?> FetchWebFormsStateAsync()
     {
         _logger.LogInformation("Fetching initial query page to get ViewState and cookies.");
-        var initialResponse = await _httpClient.GetAsync(QueryPageUrl);
-        initialResponse.EnsureSuccessStatusCode();
-        var pageHtml = await initialResponse.Content.ReadAsStringAsync();
+
+        var response = await _httpClient.GetAsync(QueryPageUrl);
+        response.EnsureSuccessStatusCode();
+        var pageHtml = await response.Content.ReadAsStringAsync();
 
         var doc = new HtmlDocument();
         doc.LoadHtml(pageHtml);
@@ -202,7 +195,7 @@ public class HospitalClient : IHospitalClient
     /// Recognizes the captcha image using the OCR service.
     /// </summary>
     /// <returns>The recognized captcha text.</returns>
-    private async Task<string> RecognizeCaptchaInternalAsync()
+    private async Task<string> RecognizeCaptchaAsync()
     {
         _logger.LogInformation("Downloading captcha image.");
         var captchaStream = await _httpClient.GetStreamAsync(CaptchaUrl);
@@ -254,7 +247,10 @@ public class HospitalClient : IHospitalClient
             { "ctl00$ContentPlaceHolder1$btnQuery.y", _random.Next(15, 21).ToString() }
         };
 
-        var postRequest = new HttpRequestMessage(HttpMethod.Post, QueryPageUrl) { Content = new FormUrlEncodedContent(formData) };
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, QueryPageUrl)
+        {
+            Content = new FormUrlEncodedContent(formData)
+        };
         var postResponse = await _httpClient.SendAsync(postRequest);
         postResponse.EnsureSuccessStatusCode();
         return await postResponse.Content.ReadAsStringAsync();
@@ -263,20 +259,20 @@ public class HospitalClient : IHospitalClient
     /// <summary>
     /// Analyzes the response HTML for success or specific error indicators.
     /// </summary>
-    /// <param name="resultHtml">The response HTML.</param>
+    /// <param name="html">The response HTML.</param>
     /// <returns>The query status.</returns>
-    private QueryStatus AnalyzeResponseHtml(string resultHtml)
+    private QueryStatus AnalyzeResponseHtml(string html)
     {
         _logger.LogInformation("Analyzing response HTML for success or specific error indicators.");
         var resultDoc = new HtmlDocument();
-        resultDoc.LoadHtml(resultHtml);
+        resultDoc.LoadHtml(html);
 
         // Priority 1: Check for the success table.
         var successTable = resultDoc.GetElementbyId("ctl00_ContentPlaceHolder1_gvQueryResult");
         if (successTable != null)
         {
             _logger.LogInformation("Query successful: Found the result table 'gvQueryResult'.");
-            return new QuerySuccess(resultHtml);
+            return new QuerySuccess(html);
         }
 
         // Priority 2: Check against the structured error definitions.
@@ -304,7 +300,7 @@ public class HospitalClient : IHospitalClient
             if (isError)
             {
                 _logger.LogWarning("Query failed: A known error pattern was detected. ID: {SpanId}, Message: {ErrorMessage}", definition.Id, errorMessage);
-                return definition.CreateStatus(errorMessage, resultHtml);
+                return definition.CreateStatus(errorMessage, html);
             }
         }
 
@@ -314,11 +310,11 @@ public class HospitalClient : IHospitalClient
         {
             var noDataMessage = noDataPanel.SelectSingleNode(".//strong")?.InnerText.Trim() ?? "目前查無您的掛號資料!";
             _logger.LogWarning("Query failed: The 'No Data Found' panel was displayed. Message: {Message}", noDataMessage);
-            return new DataNotFound(noDataMessage, resultHtml);
+            return new DataNotFound(noDataMessage, html);
         }
 
         _logger.LogError("Query failed: Could not determine the result from the response HTML. It's not a known success or failure pattern.");
-        return new UnknownResponse("未知的回應格式", resultHtml);
+        return new UnknownResponse("未知的回應格式", html);
     }
 
     /// <inheritdoc/>
@@ -396,7 +392,10 @@ public class HospitalClient : IHospitalClient
 
             // Select all rows with a specific border style, skipping the first empty header row.
             var rowNodes = tableNode.SelectNodes(".//tr[contains(@style, 'border-color:#d4d0c8') and position()>1]");
-            if (rowNodes == null) return timeTable;
+            if (rowNodes == null)
+            {
+                return timeTable;
+            }
 
             foreach (var rowNode in rowNodes)
             {
@@ -445,6 +444,11 @@ public class HospitalClient : IHospitalClient
         }
     }
 
+    /// <summary>
+    /// Parses the slots from a cell.
+    /// </summary>
+    /// <param name="cell">The cell to parse.</param>
+    /// <returns>The slots.</returns>
     private List<AppointmentSlot> ParseSlotsFromCell(HtmlNode cell)
     {
         var slots = new List<AppointmentSlot>();
@@ -496,7 +500,10 @@ public class HospitalClient : IHospitalClient
                 status = SlotStatus.Available;
 
                 // Attempt to parse the booking parameters from the href attribute.
-                var href = aNode.GetAttributeValue("href", "");
+                var hrefAttribute = aNode.GetAttributeValue("href", "");
+                // First, decode any HTML entities in the URL string, like &amp; -> &
+                var href = System.Net.WebUtility.HtmlDecode(hrefAttribute);
+
                 if (!string.IsNullOrEmpty(href) && href.StartsWith("Login.aspx"))
                 {
                     try

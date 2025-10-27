@@ -1,4 +1,6 @@
 using SPHAssistant.Core.Interfaces;
+using SPHAssistant.Core.Models.Booking;
+using SPHAssistant.Core.Models.Booking.Result;
 using SPHAssistant.Core.Models.DTOs;
 using SPHAssistant.Core.Models.Enums;
 using SPHAssistant.Core.Models.Result;
@@ -38,15 +40,14 @@ public class Worker : BackgroundService
             // This ensures that scoped services (like HospitalClient) are unique to this work item.
             using (var scope = _serviceProvider.CreateScope())
             {
+                // Resolve all necessary services from the current scope
                 var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<Worker>>();
                 var hospitalClient = scope.ServiceProvider.GetRequiredService<IHospitalClient>();
                 var queryService = scope.ServiceProvider.GetRequiredService<ITimeTableQueryService>();
+                var bookingService = scope.ServiceProvider.GetRequiredService<IAppointmentBookingService>();
 
-                // --- Test fetching and parsing the timetable ---
-                await RunTimeTableTestAsync(scopedLogger, hospitalClient, queryService);
-
-                // --- Keep the existing query logic for now ---
-                // await RunQueryAndProcessResultAsync(scopedLogger, hospitalClient, tableGenerator);
+                // --- Run the full booking test ---
+                await RunBookingTestAsync(scopedLogger, hospitalClient, queryService, bookingService);
             }
 
             _logger.LogInformation("Work item finished. Waiting for the next one.");
@@ -54,6 +55,78 @@ public class Worker : BackgroundService
             // await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
             break;
         }
+    }
+
+    private async Task RunBookingTestAsync(
+        ILogger<Worker> logger,
+        IHospitalClient hospitalClient,
+        ITimeTableQueryService queryService,
+        IAppointmentBookingService bookingService)
+    {
+        var departmentCode = "S3H00A";
+        logger.LogInformation("--- Starting Full Booking Test for Department: {DepartmentCode} ---", departmentCode);
+
+        // 1. Fetch the timetable
+        var timeTable = await hospitalClient.GetTimeTableAsync(departmentCode);
+        if (timeTable == null)
+        {
+            logger.LogError("Failed to fetch timetable, cannot proceed with booking test.");
+            return;
+        }
+
+        // 2. Find the first available slot in the next 14 days
+        logger.LogInformation("Searching for the first available slot in the next 14 days...");
+        var startDate = DateOnly.FromDateTime(DateTime.Today);
+        var endDate = startDate.AddDays(14);
+        var availableSchedules = queryService.FindDailySchedulesByDateRange(timeTable, startDate, endDate, onlyAvailable: true);
+
+        var firstAvailableSlot = availableSchedules
+            .SelectMany(kvp => kvp.Value.MorningSlots.Concat(kvp.Value.AfternoonSlots).Concat(kvp.Value.NightSlots))
+            .FirstOrDefault(slot => slot.BookingParameters != null);
+
+        if (firstAvailableSlot == null)
+        {
+            logger.LogWarning("No available slots found for department {DepartmentCode} in the next 14 days. Booking test cannot continue.", departmentCode);
+            return;
+        }
+
+        logger.LogInformation("Found an available slot to test: Doctor {DoctorName} on {Date}", 
+            firstAvailableSlot.Doctor.Name, 
+            availableSchedules.First(kvp => kvp.Value.MorningSlots.Contains(firstAvailableSlot) || kvp.Value.AfternoonSlots.Contains(firstAvailableSlot) || kvp.Value.NightSlots.Contains(firstAvailableSlot)).Key);
+
+        // 3. Prepare and execute the booking request
+        var bookingRequest = new BookingRequest(
+            Parameters: firstAvailableSlot.BookingParameters!,
+            IdType: IdType.IdCard,
+            IdNumber: "A123456789", // Test ID
+            BirthDate: "0101",       // Test BirthDate
+            IsFirstVisit: false
+        );
+
+        logger.LogInformation("Attempting to book appointment with test data: {@BookingRequest}", bookingRequest);
+        var bookingResult = await bookingService.BookAppointmentAsync(bookingRequest);
+
+        // 4. Log the result
+        var logMessage = bookingResult switch
+        {
+            BookingSuccess => $"✅ Booking successful! Message: {bookingResult.Message}",
+            BookingCaptchaError => $"❌ Booking failed: Captcha error. Message: {bookingResult.Message}",
+            BookingValidationError => $"❌ Booking failed: Validation error. Message: {bookingResult.Message}",
+            SlotUnavailableError => $"❌ Booking failed: Slot unavailable. Message: {bookingResult.Message}",
+            BookingOperationError => $"❌ Booking failed: Operation error. Message: {bookingResult.Message}",
+            UnknownBookingResponse => $"❓ Booking failed: Unknown response from server. Message: {bookingResult.Message}",
+            _ => "Booking failed with an unexpected result type."
+        };
+
+        if (bookingResult is BookingSuccess)
+        {
+            logger.LogInformation(logMessage);
+        }
+        else
+        {
+            logger.LogError(logMessage);
+        }
+        logger.LogInformation("--- Finished Full Booking Test ---");
     }
 
     private async Task RunTimeTableTestAsync(ILogger<Worker> logger, IHospitalClient hospitalClient, ITimeTableQueryService queryService)
