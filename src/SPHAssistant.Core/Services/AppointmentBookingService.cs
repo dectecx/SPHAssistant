@@ -43,7 +43,7 @@ public class AppointmentBookingService : IAppointmentBookingService
 
         try
         {
-            // Step 1: Fetch the initial state of the booking page (Login.aspx)
+            // Step 1: Fetch the initial state of the booking page (Login.aspx).
             var loginPageUrl = $"Login.aspx?rmsData={request.Parameters.RmsData}&dptName={request.Parameters.DptName}&dpt={request.Parameters.Dpt}&dptDptuid={request.Parameters.DptDptuid}";
             var webFormsState = await FetchWebFormsStateAsync(loginPageUrl);
             if (webFormsState is null)
@@ -64,39 +64,52 @@ public class AppointmentBookingService : IAppointmentBookingService
                     continue;
                 }
 
-                // Step 3: Post the booking form
-                var resultHtml = await PostBookingFormAsync(request, webFormsState, captchaText, loginPageUrl);
-                if (string.IsNullOrEmpty(resultHtml))
+                // Step 3: Post the form.
+                var verificationHtml = await PostIdentityVerificationAsync(request, webFormsState, captchaText, loginPageUrl);
+                if (string.IsNullOrEmpty(verificationHtml))
                 {
-                    return new BookingOperationError("Failed to get a response after posting the booking form.");
+                    return new BookingOperationError("Failed to get a response after posting identity verification.");
                 }
 
-                // Step 4: Analyze the response HTML
-                finalResult = AnalyzeBookingResponseHtml(resultHtml);
+                // Step 4: Analyze the response.
+                var verificationResult = AnalyzeLoginResponse(verificationHtml);
 
-                // If the result is a captcha error, retry the captcha.
-                if (finalResult is BookingCaptchaError)
+                // Handle the different outcomes of the verification step.
+                switch (verificationResult)
                 {
-                    if (attempt >= maxCaptchaRetries)
-                    {
-                        _logger.LogError("Failed to query appointment after {MaxAttempts} captcha attempts.", maxCaptchaRetries);
-                        return new BookingOperationError($"Failed to book appointment after {maxCaptchaRetries} captcha attempts. The captcha is still not recognized.");
-                    }
+                    // Case A: Verification failed with a definitive status (e.g., slot full, validation error).
+                    case VerificationFailed failed when failed.Status is not BookingCaptchaError:
+                        _logger.LogWarning("Identity verification failed with a definitive error: {Message}", failed.Status.Message);
+                        return failed.Status;
 
-                    // Wait 1 second before the next attempt
-                    _logger.LogWarning("Captcha attempt {Attempt} failed: {Message}. Retrying in 1 second...", attempt, finalResult.Message);
-                    await Task.Delay(1000);
-                    continue;
+                    // Case B: Verification failed due to a captcha error. Retry the loop.
+                    case VerificationFailed failed when failed.Status is BookingCaptchaError:
+                        _logger.LogWarning("Captcha attempt {Attempt} failed: {Message}. Retrying...", attempt, failed.Status.Message);
+                        if (attempt >= maxCaptchaRetries)
+                        {
+                            return new BookingOperationError($"Failed after {maxCaptchaRetries} captcha attempts.");
+                        }
+                        await Task.Delay(1000);
+                        continue; // Continue to the next iteration of the for loop.
+
+                    // Case C: This is a new patient. Flow is not implemented.
+                    case NewPatientRegistrationRequired:
+                        _logger.LogInformation("New patient registration is required. This flow is not yet implemented.");
+                        // TODO: Implement the new patient registration flow.
+                        return new BookingOperationError("New patient registration is not yet supported.");
+
+                    // Case D: Success! We are on the confirmation page for a returning patient.
+                    case ConfirmationRequired confirmation:
+                        _logger.LogInformation("Identity verification successful. Proceeding to final confirmation.");
+                        // Step 4: Post the final confirmation.
+                        var finalHtml = await PostConfirmationAsync(request, confirmation.State, loginPageUrl);
+                        // Step 5: Analyze the final response to get the outcome.
+                        finalResult = AnalyzeConfirmationResponse(finalHtml);
+                        break;
                 }
-
-                // If the result is successful or a definitive failure that is NOT a captcha error, exit the retry loop.
-                _logger.LogInformation("Booking successful or a definitive failure that is NOT a captcha error. Exiting retry loop. Final status: {StatusType}", finalResult.GetType().Name);
-                break;
             }
 
-            // If the final result is still null, set it to an operation error.
-            finalResult ??= new BookingOperationError($"Failed to book appointment after {maxCaptchaRetries} attempts.");
-            return finalResult;
+            return finalResult ?? new BookingOperationError($"Booking failed after {maxCaptchaRetries} attempts.");
         }
         catch (HttpRequestException ex)
         {
@@ -108,6 +121,38 @@ public class AppointmentBookingService : IAppointmentBookingService
             _logger.LogError(ex, "An unexpected error occurred in AppointmentBookingService.");
             return new BookingOperationError($"Unexpected Error: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Analyzes the response of the initial identity verification step.
+    /// </summary>
+    /// <param name="html">The response HTML from the identity verification POST request.</param>
+    /// <returns>An <see cref="IdentityVerificationResult"/> indicating the next step.</returns>
+    private IdentityVerificationResult AnalyzeLoginResponse(string html)
+    {
+        throw new NotImplementedException();
+    }
+
+    /// <summary>
+    /// Posts the second step of the booking process (confirmation) for a returning patient.
+    /// </summary>
+    /// <param name="request">The original booking request containing patient details.</param>
+    /// <param name="confirmationState">The WebForms state from the confirmation page.</param>
+    /// <param name="loginPageUrl">The URL of the previous page (Login.aspx) to be used as the referrer.</param>
+    /// <returns>The final response HTML after submitting the confirmation.</returns>
+    private Task<string> PostConfirmationAsync(BookingRequest request, WebFormsState confirmationState, string loginPageUrl)
+    {
+        throw new NotImplementedException();
+    }
+
+    /// <summary>
+    /// Analyzes the final response HTML after posting the confirmation to determine the booking outcome.
+    /// </summary>
+    /// <param name="html">The final response HTML from the confirmation POST request.</param>
+    /// <returns>A <see cref="BookingStatus"/> indicating the final outcome.</returns>
+    private BookingStatus AnalyzeConfirmationResponse(string html)
+    {
+        throw new NotImplementedException();
     }
 
     /// <summary>
@@ -164,21 +209,20 @@ public class AppointmentBookingService : IAppointmentBookingService
     }
 
     /// <summary>
-    /// Posts the booking form to the hospital website.
+    /// Posts the first step of the booking process (identity verification) to the Login.aspx page.
     /// </summary>
-    /// <param name="request">The booking request.</param>
-    /// <param name="state">The web forms state.</param>
+    /// <param name="request">The booking request containing identity information.</param>
+    /// <param name="state">The initial WebForms state from the Login.aspx page.</param>
     /// <param name="captchaText">The recognized captcha text.</param>
-    /// <param name="loginPageUrl">The URL of the initial booking page.</param>
-    /// <returns>The response HTML.</returns>
-    private async Task<string> PostBookingFormAsync(
+    /// <param name="loginPageUrl">The full URL of the Login.aspx page with query parameters.</param>
+    /// <returns>The response HTML from the identity verification post.</returns>
+    private async Task<string> PostIdentityVerificationAsync(
         BookingRequest request,
         WebFormsState state,
         string captchaText,
         string loginPageUrl)
     {
-        _logger.LogInformation("Building and posting the booking form for ID {IdNumber}.", request.IdNumber);
-        var visitType = request.IsFirstVisit ? "rdoFirst" : "rdoSeveral";
+        _logger.LogInformation("Posting identity verification for ID {IdNumber}.", request.IdNumber);
 
         var formData = new Dictionary<string, string>
         {
@@ -189,8 +233,8 @@ public class AppointmentBookingService : IAppointmentBookingService
             { "ctl00$ContentPlaceHolder1$txtInput", request.IdNumber },
             { "ctl00$ContentPlaceHolder1$txtValidate", captchaText },
             // Simulate a random click on the image button to appear more human-like.
-            { "ctl00$ContentPlaceHolder1$btnQuery.x", _random.Next(15, 91).ToString() },
-            { "ctl00$ContentPlaceHolder1$btnQuery.y", _random.Next(15, 21).ToString() }
+            { "ctl00$ContentPlaceHolder1$btnSend.x", _random.Next(15, 91).ToString() },
+            { "ctl00$ContentPlaceHolder1$btnSend.y", _random.Next(15, 21).ToString() }
         };
 
         var postRequest = new HttpRequestMessage(HttpMethod.Post, loginPageUrl)
@@ -209,54 +253,6 @@ public class AppointmentBookingService : IAppointmentBookingService
     /// <returns>The booking status.</returns>
     private BookingStatus AnalyzeBookingResponseHtml(string html)
     {
-        _logger.LogInformation("Analyzing booking response HTML.");
-        var doc = new HtmlDocument();
-        doc.LoadHtml(html);
-
-        // Priority 1: Check for success message
-        var successNode = doc.GetElementbyId("ctl00_ContentPlaceHolder1_labMessage");
-        if (successNode != null && !string.IsNullOrEmpty(successNode.InnerText))
-        {
-            var successMessage = successNode.InnerText.Trim();
-            if (successMessage.Contains("掛號成功"))
-            {
-                _logger.LogInformation("Booking successful: {Message}", successMessage);
-                return new BookingSuccess(successMessage, html);
-            }
-            // Handle cases where the slot might have just been taken
-            if (successMessage.Contains("已額滿") || successMessage.Contains("預約名額已滿"))
-            {
-                _logger.LogWarning("Booking failed: Slot is already full. Message: {Message}", successMessage);
-                return new SlotUnavailableError(successMessage, html);
-            }
-        }
-
-        // Priority 2: Check for specific validation errors
-        // Using a helper function to reduce redundant code
-        Func<string, BookingStatus?> checkError = (id) => {
-            var node = doc.GetElementbyId(id);
-            if (node != null && !string.IsNullOrEmpty(node.InnerText.Trim()))
-            {
-                var errorMessage = node.InnerText.Trim();
-                _logger.LogWarning("Booking validation error found. ID: {Id}, Message: {Message}", id, errorMessage);
-
-                if (id.Contains("validateImg")) // Captcha errors
-                    return new BookingCaptchaError(errorMessage, html);
-                
-                return new BookingValidationError(errorMessage, html); // Other validation errors
-            }
-            return null;
-        };
-
-        var errorStatus = checkError("ctl00_ContentPlaceHolder1_validateImg")
-            ?? checkError("ctl00_ContentPlaceHolder1_validateInput");
-        
-        if (errorStatus != null)
-        {
-            return errorStatus;
-        }
-        
-        _logger.LogError("Could not determine booking result from response HTML. It's not a known success or failure pattern.");
-        return new UnknownBookingResponse("未知的掛號回應格式", html);
+        throw new NotImplementedException();
     }
 }
