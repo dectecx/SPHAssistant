@@ -1,8 +1,25 @@
+using Line.Bot.SDK;
+using SPHAssistant.Line.Core.Interfaces;
+using SPHAssistant.Line.Webhook.Handlers;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+
+// 1. Configure LineBot settings from appsettings.json
+var lineBotSettings = builder.Configuration.GetSection("LineBot");
+builder.Services.Configure<LineBotSetting>(lineBotSettings);
+
+// 2. Add LineBot SDK services
+builder.Services.AddLineBot();
+
+// 3. Add custom application services
+builder.Services.AddScoped<ILineWebhookHandler, LineWebhookHandler>();
+
+
+builder.Services.AddControllers();
+// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+builder.Services.AddEndpointsApiExplorer();
 
 var app = builder.Build();
 
