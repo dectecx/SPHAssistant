@@ -1,0 +1,6 @@
+@SPHAssistant.Line.Webhook_HostAddress = http://localhost:5254
+
+GET {{SPHAssistant.Line.Webhook_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
