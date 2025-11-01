@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Line.Bot.SDK" Version="5.0.0" />
+    <PackageReference Include="LineBotSDK" Version="2.18.40" />
   </ItemGroup>
 
 </Project>

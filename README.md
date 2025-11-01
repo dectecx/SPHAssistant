@@ -1,6 +1,6 @@
 # SPHAssistant (聖保祿醫院掛號小幫手)
 
-![.NET Build](https://img.shields.io/badge/.NET-8.0-blue)
+![.NET Build](https://img.shields.io/badge/.NET-9.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 這是一個針對桃園聖保祿醫院 (St. Paul's Hospital) 設計的自動化掛號與門診查詢輔助工具。此專案旨在透過背景服務與 Line Bot 整合，簡化預約掛號、查詢門診進度與接收通知的流程。
