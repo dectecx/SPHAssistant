@@ -11,12 +11,13 @@
 * **🔔 門診進度監控與通知**：定時監控目前看診號碼，並在接近時透過 Line 發送通知。
 * **🔍 門診資訊查詢**：可透過 Line Bot 查詢特定科別的醫生、可預約時段等資訊。
 * **📅 掛號管理**：提供查詢已掛號紀錄與取消掛號的功能。
+* **🐳 Docker 支援**：提供 Dockerized 開發環境，簡化本機測試與未來部署流程。
 
 ## 🛠️ 技術棧 (Tech Stack)
 
-* **後端框架**: .NET 8 (ASP.NET Core for Web API)
+* **後端框架**: .NET 9 (ASP.NET Core for Web API)
 * **通訊介面**: Line Messaging API
-* **網頁互動**: `HttpClient` (用於 API 請求), `AngleSharp` / `HtmlAgilityPack` (用於 HTML 解析)
+* **網頁互動**: `HttpClient` (用於 API 請求), `HtmlAgilityPack` (用於 HTML 解析)
 * **影像辨識 (OCR)**: `Tesseract` + `OpenCvSharp` + `SixLabors.ImageSharp` (用於解析驗證碼)
 * **日誌記錄 (Logging)**: `Serilog` (結構化日誌框架)
 * **資料庫**: 關聯式資料庫 (待定)
@@ -24,7 +25,38 @@
 
 ## 🏗️ 系統架構規劃
 
-本專案採用模組化設計，將不同職責的功能切分，以利於開發與維護。
+本專案採用模組化的 Monorepo (單一程式碼庫) 架構，將不同職責的服務明確地劃分在獨立的目錄中，以提高內聚性、降低耦合度，並簡化獨立開發與部署的流程。
+
+### 目錄結構 (Directory Structure)
+
+```
+/SPHAssistant/ (Git Repo Root)
+├── .env.example
+├── docker-compose.yml         <-- 啟動所有服務
+├── SPHAssistant.sln           <-- 包含所有專案，用於整合開發
+├── SPHAssistant.Line.sln      <-- 只包含 Line 相關專案
+├── SPHAssistant.Worker.sln    <-- 只包含 Worker 相關專案
+├── README.md
+│
+├── src/
+│   ├── SPHAssistant.Core/     <-- 共用核心商業邏輯
+│   │
+│   ├── Line/                  <-- Line 服務的邏輯邊界
+│   │   ├── Dockerfile         <-- Line 服務專用的 Dockerfile
+│   │   ├── SPHAssistant.Line.Core/
+│   │   └── SPHAssistant.Line.Webhook/
+│   │
+│   └── Worker/                <-- Worker 服務的邏輯邊界
+│       ├── Dockerfile         <-- (規劃中) Worker 服務專用的 Dockerfile
+│       └── SPHAssistant.Worker/
+│
+├── devops/                    <-- (規劃中) CI/CD 相關腳本
+├── docs/                      <-- (規劃中) 專案文件
+├── tools/                     <-- (規劃中) 開發用工具或腳本
+└── tests/                     <-- (規劃中) 所有測試專案 (單元測試、整合測試)
+```
+
+### 服務關係圖 (Service Diagram)
 
 ```mermaid
 graph TD
@@ -39,7 +71,7 @@ graph TD
         E["🕒 Scheduler (Background Service)"]
         F[💾 Database]
     end
-    
+
     subgraph External Service
         G[🌍 聖保祿醫院網站]
         H[💬 Line Messaging API]
@@ -174,7 +206,9 @@ graph TD
 | | **3.4** 自動掛號排程服務 | ⚪️ 未開始 | - | |
 | **P4: 優化與部署** | **4.1** 錯誤處理與日誌記錄 | ✅ 已完成 | - | |
 | | **4.2** 撰寫單元測試 | ⚪️ 未開始 | - | |
-| | **4.3** Docker 容器化 | ⚪️ 未開始 | - | |
+| | **4.3** Docker 容器化 | 🟡 進行中 | - | |
+| | **4.3.1** Webhook 服務容器化 | ✅ 已完成 | - | 採用 Monorepo 架構，Context 獨立 |
+| | **4.3.2** Worker 服務容器化 | ⚪️ 未開始 | - | |
 | | **4.4** 部署至雲端平台 | ⚪️ 未開始 | - | |
 
 **狀態圖例:**
@@ -186,27 +220,64 @@ graph TD
 
 ## 🚀 如何開始 (Getting Started)
 
-1.  Clone 此專案儲存庫：
-    ```bash
-    git clone [https://github.com/your-username/SPHAssistant.git](https://github.com/your-username/SPHAssistant.git)
-    cd SPHAssistant
-    ```
-2.  安裝 .NET 8 SDK。
+### 本機直接執行 (不使用 Docker)
+
+1.  Clone 此專案儲存庫。
+2.  安裝 .NET 9 SDK。
 3.  還原專案相依套件：
     ```bash
     dotnet restore
     ```
 4.  設定環境變數（詳細內容待開發階段定義）。
-5.  執行專案：
+5.  執行專案 (可選擇執行完整的 `SPHAssistant.sln` 或特定服務的 `.sln`)：
     ```bash
-    dotnet run
+    # 執行 Webhook 服務
+    dotnet run --project src/Line/SPHAssistant.Line.Webhook/SPHAssistant.Line.Webhook.csproj
     ```
+
+### Docker 化開發
+
+此為測試 Line Bot Webhook 的建議方式。專案採用 Monorepo 架構，將 Line 服務的建置上下文 (Build Context) 獨立在其 `src/Line` 目錄下，實現了清晰的關注點分離。
+
+#### 1. 使用 Docker Compose (推薦)
+
+此方法會自動啟動 Webhook 服務與 ngrok 穿透服務。
+
+1.  **安裝 Docker 與 Docker Compose**。
+2.  **建立 `.env` 檔案**：
+    *   在專案根目錄下，將 `.env.example` 檔案複製一份並改名為 `.env`。
+    *   打開 `.env` 檔案，填入 `NGROK_AUTHTOKEN`, `LINE_CHANNEL_SECRET`, 和 `LINE_CHANNEL_ACCESS_TOKEN`。
+3.  **啟動服務**：在專案根目錄下執行：
+    ```bash
+    docker-compose up --build
+    ```
+4.  **取得 Webhook URL**：
+    *   觀察 ngrok 服務日誌，找到 `url=https://...` 的一行，此即為公開網址。
+    *   或者，在瀏覽器打開 `http://localhost:4040` 查看 ngrok 儀表板。
+5.  **設定 Line Developer Console**：
+    *   將 ngrok URL 加上路由 `/api/line` (例如: `https://your-ngrok-id.ngrok-free.dev/api/line`)，填入 Line Bot 的 Webhook URL 欄位中並儲存。
+
+#### 2. 手動建置並執行 Docker Image
+
+若需單獨建置某個服務的 Docker Image，可使用以下指令。
+
+*   **建置 Line Webhook 服務**:
+    ```bash
+    docker build -t sph-assistant-webhook:latest -f src/Line/Dockerfile src/Line
+    ```
+    *   `-t sph-assistant-webhook:latest`: 為映像檔指定名稱 (tag)。
+    *   `-f src/Line/Dockerfile`: 明確指定 `Dockerfile` 的路徑。
+    *   `src/Line`: 指定建置上下文 (Build Context)，`Dockerfile` 中的 `COPY` 指令會以此目錄為相對路徑的起點。
+
+*   **執行 Line Webhook 容器**:
+    ```bash
+    docker run -d -p 8088:8080 --name sph-webhook sph-assistant-webhook:latest
+    ```
+    *   此指令會在背景執行容器，並將容器的 8080 port 映射到本機的 8088 port。
 
 ## ⚙️ 環境設定
 
-本專案將使用 `.NET` 的 `appsettings.json` 檔案來管理設定。隨著開發的進行，所需的設定鍵值將會在此處更新。
-
-一個基本的設定檔範本 (`appsettings.Development.json`) 可能會包含以下內容：
+本專案使用 `.NET` 的 `appsettings.json` 檔案來管理設定。一個基本的設定檔範本 (`appsettings.Development.json`) 可能會包含以下內容：
 
 ```json
 {
@@ -217,6 +288,24 @@ graph TD
 }
 ```
 > **注意**：包含敏感資訊的 `appsettings.*.json` 檔案應加入 `.gitignore` 中，避免上傳至版本控制系統。
+
+## 📚 專案結構說明
+
+此 Monorepo 架構具有以下優點：
+
+1.  **清晰的邊界 (Clear Boundaries)**：
+    *   `src/Line` 和 `src/Worker` 是獨立的單元。所有與特定服務相關的程式碼和設定（包括 `Dockerfile`）都內聚在各自的目錄下，與其他服務完全解耦。
+
+2.  **優化的 Build Context**：
+    *   `docker-compose.yml` 為每個服務指定了獨立的 `build.context` (例如 `context: ./src/Line`)。
+    *   這使得 `Dockerfile` 內的路徑可以相對於其邏輯邊界的根目錄撰寫，變得非常直觀。
+    *   同時，這也避免了將不相關的檔案（如 Worker 服務的程式碼）傳送給 Docker 引擎，提升了建置效率與安全性。
+
+3.  **獨立的開發體驗 (Independent Dev Experience)**：
+    *   透過專用的 `.sln` 檔案，開發者可以只載入其關心的專案，加速 IDE 的啟動並減少認知負擔。
+
+4.  **CI/CD 友善 (CI/CD Friendly)**：
+    *   此結構可輕易地設定自動化流程 (CI/CD)，例如：只在 `src/Line` 目錄下的檔案有變動時，才觸發 Line 服務的 Docker 映像檔建置與部署。
 
 ## ⚠️ 重要聲明 (Disclaimer)
 
