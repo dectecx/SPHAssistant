@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SPHAssistant.Core\SPHAssistant.Core.csproj" />
+    <ProjectReference Include="..\..\SPHAssistant.Core\SPHAssistant.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
